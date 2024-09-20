@@ -9,17 +9,17 @@
 #define MAX_ARGS 64
 #define MAX_PIPES 10  // Maximum number of pipes supported
 
-// 1. Read user input 
+// 1. Function to read user input
 char* read_input() {
     char *input = NULL;
     size_t len = 0;
     ssize_t nread;
 
-    printf("simple_shell> ");
+    printf("simple-shell> ");
     nread = getline(&input, &len, stdin);
     if (nread == -1) {
-        printf("Error reading user input\n");
-        exit(1);
+        perror("getline");
+        exit(EXIT_FAILURE);
     }
 
     // Remove the newline character from input
@@ -27,7 +27,7 @@ char* read_input() {
     return input;
 }
 
-// 2. Handling pipe inputs (split input into commands separated by "|")
+// 2. Function to parse the input into commands and arguments (handle multiple pipes)
 int parse_input(char *input, char **commands) {
     int i = 0;
     char *token = strtok(input, "|");
@@ -37,27 +37,9 @@ int parse_input(char *input, char **commands) {
         commands[i++] = token;
         token = strtok(NULL, "|");
     }
-    commands[i] = NULL;  // Null-terminate to mark the end of the commands array
+    commands[i] = NULL;  // Null-terminate the commands array
 
-    return i;  // Return the number of commands
-}
-
-// 2*. Handling commands (break down a single command into its component arguments)
-void parse_command(char *command, char **args, int *background) {
-    int i = 0;
-    char *token = strtok(command, " ");
-    *background = 0;  // Default to foreground
-
-    // Tokenize the command string by spaces to extract the command and its arguments
-    while (token != NULL) {
-        if (strcmp(token, "&") == 0) {
-            *background = 1;  // Set background flag if '&' is found
-            break;
-        }
-        args[i++] = token;
-        token = strtok(NULL, " ");
-    }
-    args[i] = NULL;  // Null-terminate to mark the end of the arguments array
+    return i;  // Return the number of commands (i.e., the number of pipes + 1)
 }
 
 // 3. Forking a new process
@@ -72,13 +54,26 @@ pid_t fork_process() {
 
 // 4. Executing commands
 void execute_command(char **args) {
-    if (execvp(args[0], args) == -1)  {  // Corrected the execvp return value check
-        perror("Error executing command");
+    if (execvp(args[0], args) == -1) {  // Corrected the execvp return value check
+        printf("Error executing command\n");
         exit(1);
     }
 }
 
-// 4*. Executing the piped commands
+// 5. Function to parse individual commands into arguments
+void parse_command(char *command, char **args) {
+    int i = 0;
+    char *token = strtok(command, " ");
+
+    // Tokenize the command string by spaces to extract the command and its arguments
+    while (token != NULL) {
+        args[i++] = token;
+        token = strtok(NULL, " ");
+    }
+    args[i] = NULL;  // Null-terminate the arguments array
+}
+
+// 6. Function to execute the piped commands
 void execute_piped_commands(char **commands, int num_commands) {
     int pipefds[2 * (num_commands - 1)];  // One pipe for each pair of commands
     pid_t pid;
@@ -87,17 +82,16 @@ void execute_piped_commands(char **commands, int num_commands) {
     // Create pipes for each command pair
     for (i = 0; i < num_commands - 1; i++) {
         if (pipe(pipefds + i * 2) == -1) {
-            perror("Error creating pipes");
-            exit(1);
+            perror("pipe");
+            exit(EXIT_FAILURE);
         }
     }
 
     for (i = 0; i < num_commands; i++) {
         char *args[MAX_ARGS];
-        int background;
-        parse_command(commands[i], args, &background);  // Parse each command into arguments
+        parse_command(commands[i], args);  // Parse each command into arguments
 
-        pid = fork_process();
+        pid = fork_process();  // Missing semicolon fixed
 
         if (pid == 0) {
             // Child process: Setup pipes for input/output redirection
@@ -118,18 +112,17 @@ void execute_piped_commands(char **commands, int num_commands) {
             }
 
             // Execute the command
-            execute_command(args);
-        } else {
-            // Parent process: If not background, wait for the child
-            if (!background) {
-                wait(NULL);
-            }
+            execute_command(args);  // Use the execute_command function for cleaner code
         }
     }
 
-    // Parent process: Close all pipes
+    // Parent process: Close all pipes and wait for all child processes
     for (i = 0; i < 2 * (num_commands - 1); i++) {
         close(pipefds[i]);
+    }
+
+    for (i = 0; i < num_commands; i++) {
+        wait(NULL);  // Wait for each child process to finish
     }
 }
 
