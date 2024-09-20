@@ -132,3 +132,45 @@ void execute_piped_commands(char **commands, int num_commands) {
         close(pipefds[i]);
     }
 }
+
+// Main function to simulate the complete shell flow
+int main() {
+    char *input;
+    char *commands[MAX_PIPES + 1];  // To hold split commands (maximum 10 pipes)
+    int num_commands;
+
+    while (1) {
+        // 1. Read user input
+        input = read_input();
+
+        // Check if command is "exit" to terminate the shell
+        if (strcmp(input, "exit") == 0) {
+            free(input);
+            break;
+        }
+
+        // 2. Parse input into commands (split by pipes)
+        num_commands = parse_input(input, commands);
+
+        // 3. Execute the piped commands
+        if (num_commands > 1) {
+            execute_piped_commands(commands, num_commands);
+        } else {
+            // Handle single command case
+            char *args[MAX_ARGS];
+            parse_command(commands[0], args);  // Parse the single command
+
+            pid_t pid = fork();
+            if (pid == 0) {
+                execute_command(args);  // Reuse the execute_command function
+            } else {
+                wait(NULL);  // Wait for the single command to finish
+            }
+        }
+
+        // Free dynamically allocated memory for input
+        free(input);
+    }
+
+    return 0;
+}
