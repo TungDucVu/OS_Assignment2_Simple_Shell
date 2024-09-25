@@ -4,10 +4,34 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/time.h> 
+#include <time.h>      
 
 #define MAX_COMMAND_LENGTH 1024
 #define MAX_ARGS 64
-#define MAX_PIPES 10  
+#define MAX_PIPES 10
+#define MAX_HISTORY 100  
+
+//0. Command history structure
+typedef struct {
+    char command[MAX_COMMAND_LENGTH];
+    pid_t pid;
+    char start_time[64];
+    double duration;  
+} Command_history;
+
+Command_history history[MAX_HISTORY];  
+int history_count = 0;  
+
+//0*. Function to get current time as a formatted string
+void get_current_time(char *buffer, size_t size) {
+    time_t raw_time;
+    struct tm *time_info;
+
+    time(&raw_time);
+    time_info = localtime(&raw_time);
+    strftime(buffer, size, "%d-%m-%Y %H:%M:%S", time_info);
+}
 
 // 1. Read user input
 char* read_input() {
@@ -15,7 +39,7 @@ char* read_input() {
     size_t len = 0;
     ssize_t nread;
 
-    printf("simple_shell> ");
+    printf("SimpleShell> ");
     nread = getline(&input, &len, stdin);
     if (nread == -1) {
         printf("Error getting input");
@@ -67,12 +91,11 @@ pid_t fork_process() {
 
 // 4. Executing commands
 void execute_command(char **args) {
-    if (execvp(args[0], args) == -1) {  
+    if (execvp(args[0], args) == -1) {
         printf("Error executing command\n");
         exit(1);
     }
 }
-
 
 // 4*. Executing the piped commands
 void execute_piped_commands(char **commands, int num_commands) {
@@ -83,8 +106,8 @@ void execute_piped_commands(char **commands, int num_commands) {
     // Create pipes for each command pair
     for (i = 0; i < num_commands - 1; i++) {
         if (pipe(pipefds + i * 2) == -1) {
-            perror("pipe");
-            exit(EXIT_FAILURE);
+            printf("Error creating pipes");
+            exit(1);
         }
     }
 
@@ -92,9 +115,8 @@ void execute_piped_commands(char **commands, int num_commands) {
         char *args[MAX_ARGS];
         parse_command(commands[i], args);  // Parse each command into arguments
 
-        pid = fork_process();  
+        pid = fork_process();
         if (pid == 0) {
-
             // Not the first command: set the input from the previous pipe
             if (i > 0) {
                 dup2(pipefds[(i - 1) * 2], STDIN_FILENO);
@@ -111,7 +133,7 @@ void execute_piped_commands(char **commands, int num_commands) {
             }
 
             // Execute the command
-            execute_command(args);  // Use the execute_command function for cleaner code
+            execute_command(args);
         }
     }
 
@@ -125,6 +147,32 @@ void execute_piped_commands(char **commands, int num_commands) {
     }
 }
 
+// 5. Record command history
+void record_history(const char *command, pid_t pid, struct timeval start_time, struct timeval end_time) {
+    if (history_count >= MAX_HISTORY) return;  // Prevent overflow
+
+    Command_history *entry = &history[history_count];
+    snprintf(entry->command, MAX_COMMAND_LENGTH, "%s", command);
+    entry->pid = pid;
+
+    // Start time 
+    get_current_time(entry->start_time, sizeof(entry->start_time));
+
+    // Calculate the duration 
+    entry->duration = (end_time.tv_sec - start_time.tv_sec) + (end_time.tv_usec - start_time.tv_usec) / 1e6;
+
+    history_count++;
+}
+
+// 5*. Display command history
+void display_history() {
+    printf("\nCommand History:\n");
+    for (int i = 0; i < history_count; i++) {
+        printf("Command: %s | PID: %d | Start Time: %s | Duration: %.6f seconds\n",
+               history[i].command, history[i].pid, history[i].start_time, history[i].duration);
+    }
+}
+
 // Main method
 int main() {
     char *input;
@@ -132,6 +180,7 @@ int main() {
     int num_commands;
     char *args[MAX_ARGS];
     pid_t pid;
+    struct timeval start_time, end_time;  
 
     while (1) {
         // 1. Read user input
@@ -140,6 +189,7 @@ int main() {
         // Check if command is "exit" to terminate the shell
         if (strcmp(input, "exit") == 0) {
             free(input);
+            display_history();  // Display the history on exit
             break;
         }
 
@@ -150,12 +200,22 @@ int main() {
             execute_piped_commands(commands, num_commands);
         } else {
             // Handle single command case
-            parse_command(commands[0], args);  
+            parse_command(commands[0], args);
+
+            // Get the start time before forking
+            gettimeofday(&start_time, NULL);
+
             pid = fork();
             if (pid == 0) {
-                execute_command(args);  
+                execute_command(args);  // Execute the command in the child process
             } else {
-                wait(NULL);  
+                wait(NULL);  // Wait for the child process to complete
+
+                // Get the end time after the command finishes
+                gettimeofday(&end_time, NULL);
+
+                // Record the command in history
+                record_history(commands[0], pid, start_time, end_time);
             }
         }
 
