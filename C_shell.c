@@ -15,11 +15,11 @@ char* read_input() {
     size_t len = 0;
     ssize_t nread;
 
-    printf("simple-shell> ");
+    printf("simple_shell> ");
     nread = getline(&input, &len, stdin);
     if (nread == -1) {
-        perror("getline");
-        exit(EXIT_FAILURE);
+        printf("Error getting input");
+        exit(1);
     }
 
     // Remove the newline character 
